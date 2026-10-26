@@ -20,7 +20,7 @@ dependencies:
   intl: ^0.20.2
   qr: ^4.0.0
 dev_dependencies:
-  bloc_lint: ^0.4.1
+  bloc_lint: ^0.4.3
   bloc_test: ^10.0.0
   bloc_tools: ^0.1.0-dev.24
   flutter_test:
