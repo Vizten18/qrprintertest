@@ -40,3 +40,12 @@ final class _PrinterDiscovered extends QrPrinterEvent {
   @override
   List<Object?> get props => [printer.id];
 }
+
+final class _PrinterDiscoveryFailed extends QrPrinterEvent {
+  const _PrinterDiscoveryFailed(this.error);
+
+  final Object error;
+
+  @override
+  List<Object?> get props => [error];
+}

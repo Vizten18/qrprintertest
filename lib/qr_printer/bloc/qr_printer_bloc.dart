@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:nitro_printing/nitro_printing.dart';
+import 'package:qrprintertest/qr_printer/data/printer_discovery.dart';
 import 'package:qrprintertest/qr_printer/utils/qr_image_renderer.dart';
 
 part 'qr_printer_event.dart';
@@ -12,6 +13,7 @@ part 'qr_printer_state.dart';
 class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
   QrPrinterBloc({
     required this._printing,
+    this._discovery = const PrinterDiscovery(),
     this._renderQr = renderQrPng,
     this._discoveryTimeout = const Duration(seconds: 15),
     Random? random,
@@ -21,10 +23,12 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
     on<PrinterDiscoveryStarted>(_onDiscoveryStarted);
     on<PrinterDiscoveryStopped>(_onDiscoveryStopped);
     on<_PrinterDiscovered>(_onPrinterDiscovered);
+    on<_PrinterDiscoveryFailed>(_onDiscoveryFailed);
     on<PrinterSelected>(_onPrinterSelected);
   }
 
   final NitroPrinting _printing;
+  final PrinterDiscovery _discovery;
   final QrImageRenderer _renderQr;
   final Random _random;
   final Duration _discoveryTimeout;
@@ -61,21 +65,10 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
       ),
     );
 
-    _discoverySubscription = _printing.onPrinterDiscovered().listen(
+    _discoverySubscription = _discovery.discover().listen(
       (printer) => add(_PrinterDiscovered(printer)),
+      onError: (Object error) => add(_PrinterDiscoveryFailed(error)),
     );
-
-    final started = await _printing.startPrinterDiscovery();
-    if (!started) {
-      await _stopDiscovery();
-      emit(
-        state.copyWith(
-          discoveryStatus: DiscoveryStatus.failure,
-          message: () => 'No se pudo iniciar la búsqueda de impresoras',
-        ),
-      );
-      return;
-    }
 
     _discoveryTimer = Timer(
       _discoveryTimeout,
@@ -89,6 +82,21 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
   ) async {
     await _stopDiscovery();
     emit(state.copyWith(discoveryStatus: DiscoveryStatus.idle));
+  }
+
+  Future<void> _onDiscoveryFailed(
+    _PrinterDiscoveryFailed event,
+    Emitter<QrPrinterState> emit,
+  ) async {
+    await _stopDiscovery();
+    emit(
+      state.copyWith(
+        discoveryStatus: DiscoveryStatus.failure,
+        message: () =>
+            'No se pudo buscar impresoras: ${event.error}. '
+            'Revisa el permiso de red local y que estés en la misma WiFi.',
+      ),
+    );
   }
 
   void _onPrinterDiscovered(
@@ -158,10 +166,8 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
   Future<void> _stopDiscovery() async {
     _discoveryTimer?.cancel();
     _discoveryTimer = null;
-    if (_discoverySubscription == null) return;
     await _discoverySubscription?.cancel();
     _discoverySubscription = null;
-    await _printing.stopPrinterDiscovery();
   }
 
   @override

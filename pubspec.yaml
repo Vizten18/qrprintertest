@@ -9,6 +9,7 @@ environment:
 
 dependencies:
   bloc: ^9.2.1
+  bonsoir: ^7.1.5
   equatable: ^3.0.0
   flutter:
     sdk: flutter
@@ -29,5 +30,8 @@ dev_dependencies:
   very_good_analysis: ^10.3.0
 
 flutter:
+  config:
+    # `nitro` (dependencia de nitro_printing) solo soporta SPM en iOS/macOS.
+    enable-swift-package-manager: true
   generate: true
   uses-material-design: true
