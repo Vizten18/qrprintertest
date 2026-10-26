@@ -1,25 +1,60 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:nitro_printing/nitro_printing.dart';
+import 'package:qrprintertest/qr_printer/data/ipp_client.dart';
 import 'package:qrprintertest/qr_printer/data/printer_discovery.dart';
-import 'package:qrprintertest/qr_printer/utils/qr_image_renderer.dart';
+import 'package:qrprintertest/qr_printer/models/models.dart';
+import 'package:qrprintertest/qr_printer/utils/page_renderer.dart';
 
 part 'qr_printer_event.dart';
 part 'qr_printer_state.dart';
 
 class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
   QrPrinterBloc({
-    required this._printing,
+    required this._ippClient,
     this._discovery = const PrinterDiscovery(),
-    this._renderQr = renderQrPng,
+    this._renderPage = renderPageJpeg,
     this._discoveryTimeout = const Duration(seconds: 15),
     Random? random,
   }) : _random = random ?? Random(),
-       super(QrPrinterState(qrData: _randomText(random ?? Random()))) {
+       super(
+         QrPrinterState(
+           qrData: _randomText(random ?? Random()),
+           layout: PageLayout.initial(),
+         ),
+       ) {
     on<QrTextGenerated>(_onQrTextGenerated);
+    on<PaperSizeChanged>(
+      (event, emit) =>
+          _updateLayout(emit, (l) => l.copyWith(paper: event.paper)),
+    );
+    on<PrintQualityChanged>(
+      (event, emit) =>
+          _updateLayout(emit, (l) => l.copyWith(quality: event.quality)),
+    );
+    on<QrSizeChanged>(
+      (event, emit) => _updateLayout(
+        emit,
+        // Cambia el tamaño manteniendo el centro del QR.
+        (l) => l.copyWith(qrSizeMm: event.sizeMm).centeredAt(l.qrRect.center),
+      ),
+    );
+    on<QrMoved>(
+      (event, emit) => _updateLayout(
+        emit,
+        (l) => l.copyWith(
+          qrLeftMm: l.qrLeftMm + event.deltaMm.dx,
+          qrTopMm: l.qrTopMm + event.deltaMm.dy,
+        ),
+      ),
+    );
+    on<QrPlaced>(
+      (event, emit) => _updateLayout(emit, (l) => l.centeredAt(event.centerMm)),
+    );
+    on<QrCentered>((event, emit) => _updateLayout(emit, (l) => l.centered()));
     on<PrinterDiscoveryStarted>(_onDiscoveryStarted);
     on<PrinterDiscoveryStopped>(_onDiscoveryStopped);
     on<_PrinterDiscovered>(_onPrinterDiscovered);
@@ -27,13 +62,13 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
     on<PrinterSelected>(_onPrinterSelected);
   }
 
-  final NitroPrinting _printing;
+  final IppClient _ippClient;
   final PrinterDiscovery _discovery;
-  final QrImageRenderer _renderQr;
+  final PageRenderer _renderPage;
   final Random _random;
   final Duration _discoveryTimeout;
 
-  StreamSubscription<DiscoveredPrinter>? _discoverySubscription;
+  StreamSubscription<NetworkPrinter>? _discoverySubscription;
   Timer? _discoveryTimer;
 
   static String _randomText(Random random) {
@@ -43,6 +78,13 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
       (_) => chars[random.nextInt(chars.length)],
     ).join();
     return 'NEXTEP-$code';
+  }
+
+  void _updateLayout(
+    Emitter<QrPrinterState> emit,
+    PageLayout Function(PageLayout layout) update,
+  ) {
+    emit(state.copyWith(layout: update(state.layout)));
   }
 
   void _onQrTextGenerated(
@@ -103,13 +145,8 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
     _PrinterDiscovered event,
     Emitter<QrPrinterState> emit,
   ) {
-    final printer = event.printer;
-    // Una misma impresora puede anunciarse varias veces (IPv4/IPv6, ipp/ipps).
-    final exists = state.printers.any(
-      (p) => p.id == printer.id || p.uri == printer.uri,
-    );
-    if (exists) return;
-    emit(state.copyWith(printers: [...state.printers, printer]));
+    if (state.printers.contains(event.printer)) return;
+    emit(state.copyWith(printers: [...state.printers, event.printer]));
   }
 
   Future<void> _onPrinterSelected(
@@ -119,37 +156,31 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
     if (state.printStatus == PrintStatus.printing) return;
 
     final printer = event.printer;
+    final layout = state.layout;
     emit(
       state.copyWith(
-        selectedPrinterId: printer.id,
+        selectedPrinter: printer,
         printStatus: PrintStatus.printing,
         message: () => null,
       ),
     );
 
     try {
-      final png = await _renderQr(state.qrData);
-      final result = await _printing.printImage(
-        png,
-        settings: PrintSettings(
-          // URI IPP de la impresora, p.ej. ipp://192.168.1.5:631/ipp/print
-          printerId: printer.uri.isNotEmpty ? printer.uri : printer.host,
-          jobName: 'QR ${state.qrData}',
-          showPrintDialog: false,
-          fitToPage: true,
-          color: false,
-        ),
+      final jpeg = await _renderPage(layout, state.qrData);
+      final jobId = await _ippClient.printJob(
+        printerUri: printer.uri,
+        document: jpeg,
+        documentFormat: 'image/jpeg',
+        jobName: 'QR ${state.qrData}',
+        media: layout.paper.ippMedia,
+        printQuality: layout.quality.ippValue,
       );
-
       emit(
         state.copyWith(
-          printStatus: result.success
-              ? PrintStatus.success
-              : PrintStatus.failure,
-          message: () => result.success
-              ? 'Enviado a ${printer.name} (job ${result.jobId})'
-              : 'Error al imprimir: ${result.errorMessage} '
-                    '(${result.errorCode})',
+          printStatus: PrintStatus.success,
+          message: () =>
+              'Trabajo ${jobId ?? ''} aceptado por ${printer.name} '
+              '(${layout.paper.label}, ${layout.quality.label})',
         ),
       );
     } on Object catch (error, stackTrace) {
@@ -157,7 +188,7 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
       emit(
         state.copyWith(
           printStatus: PrintStatus.failure,
-          message: () => 'Error al imprimir: $error',
+          message: () => 'La impresora rechazó el trabajo: $error',
         ),
       );
     }
@@ -173,6 +204,7 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
   @override
   Future<void> close() async {
     await _stopDiscovery();
+    _ippClient.close();
     return super.close();
   }
 }

@@ -288,11 +288,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_web_plugins:
-    dependency: transitive
-    description: flutter
-    source: sdk
-    version: "0.0.0"
   frontend_server_client:
     dependency: transitive
     description:
@@ -333,6 +328,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
+  image:
+    dependency: "direct main"
+    description:
+      name: image
+      sha256: "89ed75b2f8231fe676808c5564f9590d728024ded7ac782a7ed8474f1c95b72a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.12.0"
   intl:
     dependency: "direct main"
     description:
@@ -477,30 +480,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
-  nitro:
-    dependency: transitive
-    description:
-      name: nitro
-      sha256: "5b66645b1b0f703d6ff226c3ce78e2ffad6f4731b2272cfe0ebcc9b506cb538e"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.12"
-  nitro_annotations:
-    dependency: transitive
-    description:
-      name: nitro_annotations
-      sha256: "8e637b3b9704351bb937dd335b238e130c8ff7e33d1579a8c7d3024b3b29a757"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.12"
-  nitro_printing:
-    dependency: "direct main"
-    description:
-      name: nitro_printing
-      sha256: "6f337ae8786573ec3fdf073d8ad1a212e91f13c54f8225803d4f0faea8745982"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.6"
   node_preamble:
     dependency: transitive
     description:
@@ -606,21 +585,13 @@ packages:
     source: hosted
     version: "2.2.0"
   qr:
-    dependency: transitive
-    description:
-      name: qr
-      sha256: "5a1d2586170e172b8a8c8470bbbffd5eb0cd38a66c0d77155ea138d3af3a4445"
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.0.2"
-  qr_flutter:
     dependency: "direct main"
     description:
-      name: qr_flutter
-      sha256: "5095f0fc6e3f71d08adef8feccc8cea4f12eec18a2e31c2e8d82cb6019f4b097"
+      name: qr
+      sha256: "5adccca7f0274326125fcdbf97328f5d6b1b2d7fb8a52a01cef9f40d96a759d9"
       url: "https://pub.dev"
     source: hosted
-    version: "4.1.0"
+    version: "4.0.0"
   shelf:
     dependency: transitive
     description:

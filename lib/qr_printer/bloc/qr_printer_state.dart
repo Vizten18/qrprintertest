@@ -7,36 +7,40 @@ enum PrintStatus { idle, printing, success, failure }
 final class QrPrinterState extends Equatable {
   const QrPrinterState({
     required this.qrData,
+    required this.layout,
     this.printers = const [],
     this.discoveryStatus = DiscoveryStatus.idle,
     this.printStatus = PrintStatus.idle,
-    this.selectedPrinterId,
+    this.selectedPrinter,
     this.message,
   });
 
   final String qrData;
-  final List<DiscoveredPrinter> printers;
+  final PageLayout layout;
+  final List<NetworkPrinter> printers;
   final DiscoveryStatus discoveryStatus;
   final PrintStatus printStatus;
-  final String? selectedPrinterId;
+  final NetworkPrinter? selectedPrinter;
 
   /// Mensaje de resultado (job id o error) para mostrar al usuario.
   final String? message;
 
   QrPrinterState copyWith({
     String? qrData,
-    List<DiscoveredPrinter>? printers,
+    PageLayout? layout,
+    List<NetworkPrinter>? printers,
     DiscoveryStatus? discoveryStatus,
     PrintStatus? printStatus,
-    String? selectedPrinterId,
+    NetworkPrinter? selectedPrinter,
     String? Function()? message,
   }) {
     return QrPrinterState(
       qrData: qrData ?? this.qrData,
+      layout: layout ?? this.layout,
       printers: printers ?? this.printers,
       discoveryStatus: discoveryStatus ?? this.discoveryStatus,
       printStatus: printStatus ?? this.printStatus,
-      selectedPrinterId: selectedPrinterId ?? this.selectedPrinterId,
+      selectedPrinter: selectedPrinter ?? this.selectedPrinter,
       message: message != null ? message() : this.message,
     );
   }
@@ -44,10 +48,11 @@ final class QrPrinterState extends Equatable {
   @override
   List<Object?> get props => [
     qrData,
-    printers.map((p) => p.id).toList(),
+    layout,
+    printers,
     discoveryStatus,
     printStatus,
-    selectedPrinterId,
+    selectedPrinter,
     message,
   ];
 }

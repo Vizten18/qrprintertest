@@ -2,15 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bonsoir/bonsoir.dart';
-import 'package:nitro_printing/nitro_printing.dart';
+import 'package:qrprintertest/qr_printer/models/models.dart';
 
 /// Descubre impresoras IPP en la red local vía mDNS / Bonjour.
 ///
-/// Se usa `bonsoir` en vez de `NitroPrinting.startPrinterDiscovery()` porque
-/// el descubrimiento de nitro_printing 0.0.6 en Android resuelve servicios en
-/// paralelo con `NsdManager.resolveService` (falla en silencio con más de una
-/// impresora) y en iOS no reporta errores (p.ej. permiso de red local
-/// denegado). Bonsoir encola las resoluciones y propaga los errores.
+/// Bonsoir usa NSD (Android) / Bonjour (iOS), encola las resoluciones de
+/// servicios y propaga errores (p.ej. permiso de red local denegado).
 class PrinterDiscovery {
   const PrinterDiscovery({this.serviceType = '_ipp._tcp'});
 
@@ -18,10 +15,10 @@ class PrinterDiscovery {
 
   /// Emite cada impresora resuelta. La búsqueda empieza al escuchar el stream
   /// y se detiene al cancelar la suscripción.
-  Stream<DiscoveredPrinter> discover() {
+  Stream<NetworkPrinter> discover() {
     BonsoirDiscovery? discovery;
     StreamSubscription<BonsoirDiscoveryEvent>? subscription;
-    late final StreamController<DiscoveredPrinter> controller;
+    late final StreamController<NetworkPrinter> controller;
 
     Future<void> stop() async {
       final d = discovery;
@@ -36,7 +33,7 @@ class PrinterDiscovery {
       } on Object catch (_) {}
     }
 
-    controller = StreamController<DiscoveredPrinter>(
+    controller = StreamController<NetworkPrinter>(
       onListen: () async {
         try {
           final d = discovery = BonsoirDiscovery(type: serviceType);
@@ -64,9 +61,9 @@ class PrinterDiscovery {
     return controller.stream;
   }
 
-  DiscoveredPrinter _toPrinter(BonsoirService service) {
+  NetworkPrinter _toPrinter(BonsoirService service) {
     // Preferimos la IPv4 ya resuelta: evita depender de que `.local` resuelva
-    // dentro del plugin de impresión y de corchetes en URIs IPv6.
+    // y de corchetes en URIs IPv6.
     final ipv4 = service.hostAddresses.firstWhere(
       (a) => InternetAddress.tryParse(a)?.type == InternetAddressType.IPv4,
       orElse: () => '',
@@ -78,17 +75,15 @@ class PrinterDiscovery {
             '',
           );
 
-    var resourcePath = service.attributes['rp'] ?? 'ipp/print';
-    if (resourcePath.startsWith('/')) resourcePath = resourcePath.substring(1);
-
-    final uri = 'ipp://$host:${service.port}/$resourcePath';
-    return DiscoveredPrinter(
-      id: uri,
+    final resourcePath = service.attributes['rp'] ?? 'ipp/print';
+    return NetworkPrinter(
       name: service.name,
-      host: host,
-      port: service.port,
-      serviceType: service.type,
-      uri: uri,
+      uri: Uri(
+        scheme: 'ipp',
+        host: host,
+        port: service.port,
+        path: resourcePath.startsWith('/') ? resourcePath : '/$resourcePath',
+      ),
     );
   }
 }

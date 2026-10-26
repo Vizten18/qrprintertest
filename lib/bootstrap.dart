@@ -3,7 +3,6 @@ import 'dart:developer';
 
 import 'package:bloc/bloc.dart';
 import 'package:flutter/widgets.dart';
-import 'package:nitro_printing/nitro_printing.dart';
 
 class AppBlocObserver extends BlocObserver {
   const AppBlocObserver();
@@ -29,9 +28,6 @@ Future<void> bootstrap(FutureOr<Widget> Function() builder) async {
   Bloc.observer = const AppBlocObserver();
 
   // Add cross-flavor configuration here
-  WidgetsFlutterBinding.ensureInitialized();
-  // Instancia el módulo WASM en web; no-op en plataformas nativas.
-  await ensureNitroPrintingReady();
 
   runApp(await builder());
 }
