@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -31,11 +32,10 @@ class IppException implements Exception {
 /// Cliente IPP/2.0 mínimo (RFC 8011) para enviar un Print-Job con los
 /// atributos que nitro_printing no permite: hoja, calidad, color y escalado.
 class IppClient {
-  IppClient({HttpClient? httpClient})
-    : _httpClient = httpClient ?? HttpClient()
-        ..connectionTimeout = const Duration(seconds: 15);
+  IppClient({this.responseTimeout = const Duration(seconds: 60)});
 
-  final HttpClient _httpClient;
+  /// Tiempo máximo para que la impresora responda al trabajo enviado.
+  final Duration responseTimeout;
   int _requestId = 0;
 
   /// Envía [document] como Print-Job y devuelve el `job-id` asignado por la
@@ -66,34 +66,97 @@ class IppClient {
       ..string(0x44, 'print-scaling', scaling)
       ..group(0x03);
 
-    final response = await _post(printerUri, request.bytes, document);
+    var response = await _post(printerUri, request.bytes, document);
+    // 426 Upgrade Required: la impresora exige TLS (p.ej. Epson) -> ipps.
+    response ??= await _post(
+      printerUri.replace(scheme: 'ipps'),
+      request.bytes,
+      document,
+    );
+    if (response == null) {
+      throw const IppException(426, 'La impresora exige TLS');
+    }
     return _parseResponse(response);
   }
 
-  Future<Uint8List> _post(
+  /// Envía el POST HTTP armado a mano sobre un socket.
+  ///
+  /// No se usa `HttpClient` de dart:io: las HP (Smart Tank 580, DeskJet 2800)
+  /// dejan colgadas sus peticiones sin responder, mientras que la misma
+  /// petición IPP enviada como lo hace curl (cabeceras estándar, `Host`
+  /// primero, sin `accept-encoding`) responde al instante.
+  ///
+  /// Devuelve `null` si la impresora responde 426 (exige TLS).
+  Future<Uint8List?> _post(
     Uri printerUri,
     Uint8List ippRequest,
     Uint8List document,
   ) async {
-    // IPP viaja sobre HTTP: ipp://host:631/path -> http://host:631/path
-    final httpUri = printerUri.replace(
-      scheme: printerUri.scheme == 'ipps' ? 'https' : 'http',
-      port: printerUri.hasPort ? printerUri.port : 631,
-    );
-    final request = await _httpClient.postUrl(httpUri);
-    request.headers
-      ..contentType = ContentType('application', 'ipp')
-      ..contentLength = ippRequest.length + document.length;
-    request
-      ..add(ippRequest)
-      ..add(document);
-    final response = await request.close();
-    final builder = BytesBuilder(copy: false);
-    await response.forEach(builder.add);
-    if (response.statusCode != HttpStatus.ok) {
-      throw IppException(response.statusCode, 'HTTP ${response.statusCode}');
+    final secure = printerUri.scheme == 'ipps';
+    final host = printerUri.host;
+    final port = printerUri.hasPort ? printerUri.port : 631;
+    final path = printerUri.path.isEmpty ? '/' : printerUri.path;
+
+    final Socket socket;
+    try {
+      socket = secure
+          ? await SecureSocket.connect(
+              host,
+              port,
+              timeout: const Duration(seconds: 15),
+              // Las impresoras de la red local usan certificados autofirmados.
+              onBadCertificate: (_) => true,
+            )
+          : await Socket.connect(
+              host,
+              port,
+              timeout: const Duration(seconds: 15),
+            );
+    } on SocketException catch (e) {
+      throw IppException(0x0500, 'no se pudo conectar: ${e.message}');
     }
-    return builder.takeBytes();
+
+    try {
+      final headers =
+          'POST $path HTTP/1.1\r\n'
+          'Host: $host:$port\r\n'
+          'User-Agent: qrprintertest IPP/2.0\r\n'
+          'Content-Type: application/ipp\r\n'
+          'Content-Length: ${ippRequest.length + document.length}\r\n'
+          'Connection: close\r\n'
+          '\r\n';
+      socket
+        ..add(ascii.encode(headers))
+        ..add(ippRequest)
+        ..add(document);
+      await socket.flush();
+
+      // Con `Connection: close` la impresora cierra al terminar la respuesta.
+      final builder = BytesBuilder(copy: false);
+      await socket.forEach(builder.add).timeout(responseTimeout);
+      final response = _HttpResponse.parse(builder.takeBytes());
+
+      if (response.statusCode == HttpStatus.upgradeRequired) return null;
+      if (response.statusCode != HttpStatus.ok) {
+        throw IppException(
+          response.statusCode,
+          'HTTP ${response.statusCode}',
+        );
+      }
+      return response.body;
+    } on TimeoutException {
+      throw IppException(
+        0x0507,
+        'la impresora no respondió en ${responseTimeout.inSeconds} s',
+      );
+    } on SocketException catch (e) {
+      // Las que exigen TLS (p.ej. Epson) responden 426 y cortan la conexión
+      // mientras aún se envía el documento: se reintenta por ipps.
+      if (!secure) return null;
+      throw IppException(0x0500, 'conexión interrumpida: ${e.message}');
+    } finally {
+      socket.destroy();
+    }
   }
 
   int? _parseResponse(Uint8List bytes) {
@@ -132,7 +195,7 @@ class IppClient {
     return jobId;
   }
 
-  void close() => _httpClient.close(force: true);
+  void close() {}
 }
 
 class _IppWriter {
@@ -174,5 +237,78 @@ class _IppWriter {
   void _uint32(int value) {
     _uint16((value >> 16) & 0xFFFF);
     _uint16(value & 0xFFFF);
+  }
+}
+
+/// Respuesta HTTP/1.1 mínima: status, cuerpo con `Content-Length` o
+/// `Transfer-Encoding: chunked` y salto de respuestas `100 Continue`.
+class _HttpResponse {
+  const _HttpResponse(this.statusCode, this.body);
+
+  factory _HttpResponse.parse(Uint8List raw) {
+    var offset = 0;
+    while (true) {
+      final headerEnd = _indexOf(raw, _crlfCrlf, offset);
+      if (headerEnd < 0) {
+        throw const IppException(0x0500, 'Respuesta HTTP incompleta');
+      }
+      final lines = latin1.decode(raw.sublist(offset, headerEnd)).split('\r\n');
+      final statusCode = int.parse(lines.first.split(' ')[1]);
+      offset = headerEnd + 4;
+      if (statusCode == 100) continue;
+
+      final headers = {
+        for (final line in lines.skip(1))
+          if (line.contains(':'))
+            line.substring(0, line.indexOf(':')).trim().toLowerCase(): line
+                .substring(line.indexOf(':') + 1)
+                .trim(),
+      };
+      final rest = raw.sublist(offset);
+      if (headers['transfer-encoding']?.toLowerCase() == 'chunked') {
+        return _HttpResponse(statusCode, _dechunk(rest));
+      }
+      final length = int.tryParse(headers['content-length'] ?? '');
+      return _HttpResponse(
+        statusCode,
+        length == null || length > rest.length ? rest : rest.sublist(0, length),
+      );
+    }
+  }
+
+  final int statusCode;
+  final Uint8List body;
+
+  static const _crlf = [13, 10];
+  static const _crlfCrlf = [13, 10, 13, 10];
+
+  static Uint8List _dechunk(Uint8List data) {
+    final out = BytesBuilder(copy: false);
+    var offset = 0;
+    while (offset < data.length) {
+      final lineEnd = _indexOf(data, _crlf, offset);
+      if (lineEnd < 0) break;
+      final sizeText = latin1.decode(data.sublist(offset, lineEnd));
+      final size = int.parse(sizeText.split(';').first.trim(), radix: 16);
+      if (size == 0) break;
+      offset = lineEnd + 2;
+      out.add(data.sublist(offset, offset + size));
+      offset += size + 2;
+    }
+    return out.takeBytes();
+  }
+
+  static int _indexOf(Uint8List data, List<int> pattern, int start) {
+    for (var i = start; i <= data.length - pattern.length; i++) {
+      var match = true;
+      for (var j = 0; j < pattern.length; j++) {
+        if (data[i + j] != pattern[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return i;
+    }
+    return -1;
   }
 }

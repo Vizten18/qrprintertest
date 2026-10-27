@@ -188,7 +188,7 @@ class QrPrinterBloc extends Bloc<QrPrinterEvent, QrPrinterState> {
       emit(
         state.copyWith(
           printStatus: PrintStatus.failure,
-          message: () => 'La impresora rechazó el trabajo: $error',
+          message: () => 'No se pudo imprimir: $error',
         ),
       );
     }
