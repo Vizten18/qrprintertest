@@ -9,7 +9,7 @@ environment:
 
 dependencies:
   bloc: ^9.2.1
-  bonsoir: ^7.1.5
+  bonsoir: ^7.1.6
   equatable: ^3.0.0
   flutter:
     sdk: flutter
